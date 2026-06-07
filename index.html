@@ -261,50 +261,78 @@
 
     // --- レ点预处理（循环，支持再读拆分，修复重复输出） ---
     function preprocessReAll(items) {
-        let hasRe = true;
-        while (hasRe) {
-            hasRe = false;
-            const result = [];
-            let i = 0;
-            while (i < items.length) {
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (let i = 0; i < items.length; i++) {
                 const cur = items[i];
                 if (cur.type === 'mark' && cur.inner.includes('レ')) {
-                    const left = result.length > 0 ? result[result.length - 1] : null;
-                    const rightIdx = i + 1;
-                    const right = rightIdx < items.length && (items[rightIdx].type === 'word' || items[rightIdx].type === 'angle') ? items[rightIdx] : null;
-                    if (left && right && (left.type === 'word' || left.type === 'angle')) {
-                        const { mainText, angleText } = splitAngleWord(left.value);
-                        const hasAngle = angleText.length > 0;
-                        const exchangeLeft = hasAngle ? angleText : left.value;
-                        const mergedValue = right.value + exchangeLeft;
-                        const innerWithoutRe = cur.inner.replace(/レ/g, '');
-
-                        const mergedWord = { type:'word', value: mergedValue, hasMerge: true, mark: null };
-
-                        if (hasAngle) {
-                            if (mainText.length > 0) {
-                                result[result.length - 1] = { type:'word', value: mainText, hasMerge: left.hasMerge, mark: null };
-                            } else {
-                                result.pop();
-                            }
-                            result.push(mergedWord);
-                        } else {
-                            result[result.length - 1] = mergedWord;
+                    // 向前查找最近的 word 或 angle
+                    let leftIdx = -1;
+                    for (let j = i - 1; j >= 0; j--) {
+                        if (items[j].type === 'word' || items[j].type === 'angle') {
+                            leftIdx = j; break;
                         }
-
-                        if (innerWithoutRe !== '') {
-                            result.push({ type:'mark', value:'['+innerWithoutRe+']', inner:innerWithoutRe });
-                        }
-
-                        i = rightIdx + 1;
-                        hasRe = true;
-                        continue;
                     }
+                    if (leftIdx === -1) continue;
+                    // 向后查找最近的 word 或 angle
+                    let rightIdx = -1;
+                    for (let j = i + 1; j < items.length; j++) {
+                        if (items[j].type === 'word' || items[j].type === 'angle') {
+                            rightIdx = j; break;
+                        }
+                    }
+                    if (rightIdx === -1) continue;
+    
+                    const left = items[leftIdx];
+                    const right = items[rightIdx];
+                    const { mainText, angleText } = splitAngleWord(left.value);
+                    const hasAngle = angleText.length > 0;
+                    const exchangeLeft = hasAngle ? angleText : left.value;
+                    const mergedValue = right.value + exchangeLeft;
+                    const innerWithoutRe = cur.inner.replace(/レ/g, '');
+    
+                    // 收集左词块和右词块之间的所有标记（不包含左右词块，不包含当前的レ）
+                    const marksBetween = [];
+                    for (let k = leftIdx + 1; k < rightIdx; k++) {
+                        if (items[k].type === 'mark' && k !== i) {
+                            marksBetween.push(items[k]);
+                        }
+                    }
+                    const newMarks = [];
+                    if (innerWithoutRe !== '') {
+                        newMarks.push({ type: 'mark', value: '[' + innerWithoutRe + ']', inner: innerWithoutRe });
+                    }
+    
+                    // 删除 leftIdx 到 rightIdx 的所有元素
+                    items.splice(leftIdx, rightIdx - leftIdx + 1);
+    
+                    // 按顺序插入：主文本（如果有） -> 合并词 -> 中间标记 -> 新标记
+                    if (hasAngle) {
+                        if (mainText.length > 0) {
+                            items.splice(leftIdx, 0, { type: 'word', value: mainText, hasMerge: left.hasMerge, mark: null });
+                            items.splice(leftIdx + 1, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
+                        } else {
+                            items.splice(leftIdx, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
+                        }
+                    } else {
+                        items.splice(leftIdx, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
+                    }
+                    // 在合并词后依次插入保留的标记
+                    let insertPos = leftIdx + 1 + (hasAngle && mainText.length > 0 ? 1 : 0);
+                    for (const m of marksBetween) {
+                        items.splice(insertPos, 0, m);
+                        insertPos++;
+                    }
+                    for (const m of newMarks) {
+                        items.splice(insertPos, 0, m);
+                        insertPos++;
+                    }
+    
+                    changed = true;
+                    break; // 数组结构已变，重新扫描
                 }
-                result.push(cur);
-                i++;
             }
-            items = result;
         }
         return items;
     }
