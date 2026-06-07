@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>汉文训读 - 语序调整（纵点标记保留修正）</title>
+    <style>
+        :root {
+            --bg: #faf8f5; --card-bg: #ffffff; --text: #2c2416;
+            --border: #d9d0c1; --accent: #8b5e3c; --radius: 10px;
+            --font-serif: 'Noto Serif JP', 'Source Han Serif', 'YuMincho', serif;
+            --font-sans: 'Inter', 'Noto Sans JP', sans-serif;
+        }
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+        .container{width:100%;max-width:960px;background:var(--card-bg);border-radius:16px;box-shadow:0 2px 20px rgba(60,40,20,0.06);padding:32px 28px 28px;border:1px solid var(--border);}
+        h2{font-family:var(--font-serif);font-size:1.4rem;color:var(--accent);margin-bottom:20px;text-align:center;}
+        .input-row{display:flex;gap:12px;margin-bottom:16px;align-items:flex-end;}
+        .input-row input{flex:1;padding:12px 16px;font-family:var(--font-serif);font-size:1rem;border:1.5px solid var(--border);border-radius:var(--radius);background:#fdfcf9;color:var(--text);}
+        .input-row input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(139,94,60,0.06);}
+        .btn{padding:12px 28px;font-size:0.9rem;font-weight:600;border-radius:30px;cursor:pointer;border:1.5px solid var(--accent);background:var(--accent);color:#fff;transition:all 0.2s;}
+        .btn:hover{background:#6b4630;border-color:#6b4630;}
+        .btn-outline{background:transparent;color:var(--accent);border:1.5px solid var(--border);}
+        .btn-outline:hover{background:#f0e6d8;border-color:var(--accent);}
+        .output-box{background:#fdfcf9;border:1.5px solid var(--border);border-radius:var(--radius);padding:16px 18px;min-height:100px;font-family:var(--font-serif);font-size:1.1rem;line-height:1.9;margin-top:8px;white-space:pre-wrap;word-break:break-all;}
+        .step-info{font-size:0.85rem;color:#5c5347;margin-top:16px;padding:12px;background:#f5f0e8;border-radius:8px;}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>漢文訓読 語順調整</h2>
+    <div class="input-row">
+        <input type="text" id="textInput" placeholder="例：孤之有ルハ[二]孔明[一]，猶ホ‹ごと›«キ»[二]魚之有ルガ[一レ]水也。" value="孤之有ルハ[二]孔明[一]，猶ホ‹ごと›«キ»[二]魚之有ルガ[一レ]水也。">
+        <button class="btn" id="convertBtn">変換</button>
+        <button class="btn btn-outline" id="clearBtn">クリア</button>
+    </div>
+    <div class="output-box" id="outputBox">変換結果がここに表示されます</div>
+    <div class="step-info" id="stepInfo"></div>
+</div>
+<script>
+(function() {
+    // --- 字符判断工具（含踊り字〻） ---
+    function isKanji(ch) {
+        const code = ch.charCodeAt(0);
+        return (code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3400 && code <= 0x4DBF) || (code >= 0x20000 && code <= 0x2A6DF);
+    }
+    function isKana(ch) {
+        const code = ch.charCodeAt(0);
+        return (code >= 0x3040 && code <= 0x309F) || (code >= 0x30A0 && code <= 0x30FF);
+    }
+    function isOdoriji(ch) {
+        const code = ch.charCodeAt(0);
+        return code === 0x303B || code === 0x309D || code === 0x309E || code === 0x30FD || code === 0x30FE;
+    }
+    function isParenStart(ch) { return ch === '(' || ch === '（'; }
+    function getParenClose(ch) { return ch === '(' ? ')' : (ch === '（' ? '）' : null); }
+    function isSeparator(ch) { return /[，、,。．.\s\t\n\r]/.test(ch); }
+    function isAngleOpen(ch) { return ch === '\u2039' || ch === '\u00AB'; }
+    function getAngleClose(open) { return open === '\u2039' ? '\u203A' : (open === '\u00AB' ? '\u00BB' : null); }
+    function isJuuten(ch) { return ch === '㆐' || ch === '―'; }
+    function isQuote(ch) { return ch === "'" || ch === '\u2018' || ch === '\u2019'; }
+
+    // --- 标记分组（十天干push） ---
+    function getMarkerGroup(inner) {
+        const digitalPush = ['二','三','四','五','六','七','八','九'];
+        const digitalPop = ['一'];
+        const updownPush = ['中','下'];
+        const updownPop = ['上'];
+        const kouotsuPush = ['乙','丙','丁','戊','己','庚','辛','壬','癸'];
+        const kouotsuPop = ['甲'];
+        const tenchiPush = ['地','人'];
+        const tenchiPop = ['天'];
+        if (digitalPush.includes(inner)) return { group:'digital', action:'push' };
+        if (digitalPop.includes(inner)) return { group:'digital', action:'pop' };
+        if (updownPush.includes(inner)) return { group:'updown', action:'push' };
+        if (updownPop.includes(inner)) return { group:'updown', action:'pop' };
+        if (kouotsuPush.includes(inner)) return { group:'kouotsu', action:'push' };
+        if (kouotsuPop.includes(inner)) return { group:'kouotsu', action:'pop' };
+        if (tenchiPush.includes(inner)) return { group:'tenchi', action:'push' };
+        if (tenchiPop.includes(inner)) return { group:'tenchi', action:'pop' };
+        return null;
+    }
+
+    // --- 分词 ---
+    function tokenize(text) {
+        const items = [];
+        let i = 0;
+        const len = text.length;
+        while (i < len) {
+            const ch = text[i];
+            if (isSeparator(ch)) { items.push({type:'sep',value:ch}); i++; continue; }
+
+            if (ch === '[') {
+                const start = i; i++; let depth=1;
+                while (i<len && depth>0) { if (text[i]==='[') depth++; else if (text[i]===']') depth--; i++; }
+                items.push({type:'mark', value:text.substring(start,i), inner:text.substring(start+1,i-1)});
+                continue;
+            }
+
+            if (isQuote(ch)) {
+                const openQuote = ch;
+                const start = i; i++;
+                while (i<len && !isQuote(text[i])) i++;
+                if (i>=len) { items.push({type:'word',value:text.substring(start)}); break; }
+                const closeQuote = text[i]; i++;
+                let note = '';
+                if (i<len && isParenStart(text[i])) {
+                    const parenChar = text[i]; const closeParen = getParenClose(parenChar);
+                    const noteStart = i; i++; let depth=1;
+                    while (i<len && depth>0) { if (text[i]===parenChar) depth++; else if (text[i]===closeParen) depth--; i++; }
+                    note = text.substring(noteStart,i);
+                }
+                const inner = text.substring(start+1, i - (note ? note.length : 0) - 1);
+                items.push({ type:'quote_block', value:text.substring(start,i), inner:inner, note:note, openQuote:openQuote, closeQuote:closeQuote });
+                continue;
+            }
+
+            if (isJuuten(ch)) { items.push({type:'juuten',value:ch}); i++; continue; }
+
+            if (isKanji(ch)) {
+                let buf = ch; i++;
+                while (i<len) {
+                    const cur = text[i];
+                    if (cur==='[' || cur===']' || isSeparator(cur) || isJuuten(cur) || isQuote(cur)) break;
+                    if (isKanji(cur)) break;
+                    if (isAngleOpen(cur)) {
+                        const closeChar = getAngleClose(cur);
+                        const start = i; i++;
+                        while (i<len && text[i]!==closeChar) i++;
+                        if (i<len) i++;
+                        buf += text.substring(start,i);
+                        continue;
+                    }
+                    if (isParenStart(cur)) {
+                        const closeChar = getParenClose(cur);
+                        const start = i; i++; let depth=1;
+                        while (i<len && depth>0) { if (text[i]===cur) depth++; else if (text[i]===closeChar) depth--; i++; }
+                        buf += text.substring(start,i);
+                        continue;
+                    }
+                    if (isKana(cur) || isOdoriji(cur)) { buf+=cur; i++; continue; }
+                    break;
+                }
+                items.push({type:'word', value:buf, hasMerge:false});
+                continue;
+            }
+
+            if (isAngleOpen(ch)) {
+                const closeChar = getAngleClose(ch);
+                const start = i; i++;
+                while (i<len && text[i]!==closeChar) i++;
+                if (i<len) i++;
+                items.push({type:'angle', value:text.substring(start,i)});
+                continue;
+            }
+
+            if (isKana(ch) || isOdoriji(ch) || isParenStart(ch)) {
+                let buf = '';
+                while (i<len) {
+                    const cur = text[i];
+                    if (cur==='[' || cur===']' || isSeparator(cur) || isKanji(cur) || isAngleOpen(cur) || isJuuten(cur) || isQuote(cur)) break;
+                    if (isParenStart(cur)) {
+                        const closeChar = getParenClose(cur);
+                        const start = i; i++; let depth=1;
+                        while (i<len && depth>0) { if (text[i]===cur) depth++; else if (text[i]===closeChar) depth--; i++; }
+                        buf += text.substring(start,i);
+                        continue;
+                    }
+                    buf += cur; i++;
+                }
+                if (buf.length>0) items.push({type:'word', value:buf, hasMerge:false});
+                continue;
+            }
+            i++;
+        }
+        return items;
+    }
+
+    // --- 展开所有引用块 ---
+    function expandAllQuotes(items) {
+        const result = [];
+        for (const item of items) {
+            if (item.type === 'quote_block') {
+                const innerTokens = tokenize(item.inner);
+                let combined = '';
+                let marks = [];
+                for (const t of innerTokens) {
+                    if (t.type === 'word' || t.type === 'angle') combined += t.value;
+                    else if (t.type === 'mark') marks.push(t);
+                    else if (t.type === 'sep') combined += t.value;
+                }
+                const fullValue = item.openQuote + combined + item.closeQuote + (item.note || '');
+                result.push({ type:'word', value: fullValue, hasMerge: marks.length > 0, mark: null });
+                for (const m of marks) result.push(m);
+            } else {
+                result.push(item);
+            }
+        }
+        return result;
+    }
+
+    // --- 纵点合并（修复标记丢失问题） ---
+    function mergeJuuten(items) {
+        function findPrevWord(arr, endIdx) { for (let j=endIdx; j>=0; j--) if (arr[j].type==='word') return j; return -1; }
+        function findNextWord(arr, startIdx) { for (let j=startIdx; j<arr.length; j++) if (arr[j].type==='word') return j; return -1; }
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type === 'juuten') {
+                    const prevIdx = findPrevWord(items, i - 1);
+                    if (prevIdx === -1) continue;
+                    const nextIdx = findNextWord(items, i + 1);
+                    if (nextIdx === -1) continue;
+                    const prevWord = items[prevIdx];
+                    const nextWord = items[nextIdx];
+
+                    // 收集纵点到下一个word之间的所有标记（不包含纵点本身和下一个word）
+                    const collectedMarks = [];
+                    for (let k = i + 1; k < nextIdx; k++) {
+                        if (items[k].type === 'mark') collectedMarks.push(items[k]);
+                    }
+
+                    // 合并两个word的值
+                    prevWord.value = prevWord.value + nextWord.value;
+                    prevWord.hasMerge = true;
+
+                    // 删除从纵点位置到 nextIdx 的所有元素
+                    items.splice(i, nextIdx - i + 1);
+
+                    // 将收集到的标记插入到合并后word的紧后面
+                    for (let m = collectedMarks.length - 1; m >= 0; m--) {
+                        items.splice(prevIdx + 1, 0, collectedMarks[m]);
+                    }
+
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        return items.filter(item => item.type !== 'juuten');
+    }
+
+    // --- 再读文字拆分工具 ---
+    function splitAngleWord(wordValue) {
+        const mainParts = [], angleParts = [];
+        let remaining = wordValue;
+        while (true) {
+            const angleStart = remaining.search(/[\u2039\u00AB]/);
+            if (angleStart === -1) { mainParts.push(remaining); break; }
+            mainParts.push(remaining.substring(0, angleStart));
+            const openChar = remaining[angleStart];
+            const closeChar = getAngleClose(openChar);
+            const closeIdx = remaining.indexOf(closeChar, angleStart+1);
+            if (closeIdx === -1) { mainParts.push(remaining.substring(angleStart)); break; }
+            angleParts.push(remaining.substring(angleStart+1, closeIdx));
+            remaining = remaining.substring(closeIdx+1);
+        }
+        return { mainText: mainParts.join(''), angleText: angleParts.join('') };
+    }
+
+    // --- レ点预处理（循环，支持再读拆分，修复重复输出） ---
+    function preprocessReAll(items) {
+        let hasRe = true;
+        while (hasRe) {
+            hasRe = false;
+            const result = [];
+            let i = 0;
+            while (i < items.length) {
+                const cur = items[i];
+                if (cur.type === 'mark' && cur.inner.includes('レ')) {
+                    const left = result.length > 0 ? result[result.length - 1] : null;
+                    const rightIdx = i + 1;
+                    const right = rightIdx < items.length && (items[rightIdx].type === 'word' || items[rightIdx].type === 'angle') ? items[rightIdx] : null;
+                    if (left && right && (left.type === 'word' || left.type === 'angle')) {
+                        const { mainText, angleText } = splitAngleWord(left.value);
+                        const hasAngle = angleText.length > 0;
+                        const exchangeLeft = hasAngle ? angleText : left.value;
+                        const mergedValue = right.value + exchangeLeft;
+                        const innerWithoutRe = cur.inner.replace(/レ/g, '');
+
+                        const mergedWord = { type:'word', value: mergedValue, hasMerge: true, mark: null };
+
+                        if (hasAngle) {
+                            if (mainText.length > 0) {
+                                result[result.length - 1] = { type:'word', value: mainText, hasMerge: left.hasMerge, mark: null };
+                            } else {
+                                result.pop();
+                            }
+                            result.push(mergedWord);
+                        } else {
+                            result[result.length - 1] = mergedWord;
+                        }
+
+                        if (innerWithoutRe !== '') {
+                            result.push({ type:'mark', value:'['+innerWithoutRe+']', inner:innerWithoutRe });
+                        }
+
+                        i = rightIdx + 1;
+                        hasRe = true;
+                        continue;
+                    }
+                }
+                result.push(cur);
+                i++;
+            }
+            items = result;
+        }
+        return items;
+    }
+
+    // --- 主处理流程 ---
+    function process(text) {
+        let items = tokenize(text);
+        items = expandAllQuotes(items);
+        items = mergeJuuten(items);
+        items = preprocessReAll(items);
+
+        const groups = {
+            digital: { stack: [] },
+            updown: { stack: [] },
+            kouotsu: { stack: [] },
+            tenchi: { stack: [] }
+        };
+        const outputParts = [];
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type === 'sep') { outputParts.push(item.value); continue; }
+            if (item.type === 'word') {
+                const next = items[i+1];
+                if (next && next.type === 'mark') {
+                    const markerInfo = getMarkerGroup(next.inner);
+                    if (markerInfo) {
+                        const { mainText, angleText } = splitAngleWord(item.value);
+                        const group = groups[markerInfo.group];
+                        if (markerInfo.action === 'push') {
+                            if (angleText) { if (mainText) outputParts.push(mainText); group.stack.push(angleText); }
+                            else { group.stack.push(item.value); }
+                        } else {
+                            outputParts.push(item.value);
+                            while (group.stack.length > 0) outputParts.push(group.stack.pop());
+                        }
+                        i++;
+                    } else { outputParts.push(item.value); }
+                } else { outputParts.push(item.value); }
+                continue;
+            }
+            if (item.type === 'angle') { outputParts.push(item.value); continue; }
+            if (item.type === 'mark') { outputParts.push(item.value); continue; }
+        }
+
+        const groupOrder = ['digital','updown','kouotsu','tenchi'];
+        for (const gName of groupOrder) {
+            while (groups[gName].stack.length > 0) outputParts.push(groups[gName].stack.pop());
+        }
+        return outputParts.join('');
+    }
+
+    // --- UI ---
+    const inputEl = document.getElementById('textInput');
+    const outputBox = document.getElementById('outputBox');
+    const stepInfo = document.getElementById('stepInfo');
+    const convertBtn = document.getElementById('convertBtn');
+    const clearBtn = document.getElementById('clearBtn');
+
+    function convert() {
+        const text = inputEl.value.trim();
+        if (!text) { outputBox.textContent = 'テキストを入力してください'; stepInfo.innerHTML = ''; return; }
+        try {
+            const result = process(text);
+            outputBox.textContent = result;
+            stepInfo.innerHTML = '✅ 変換完了';
+        } catch (e) {
+            outputBox.textContent = 'エラーが発生しました';
+            stepInfo.innerHTML = '⚠️ ' + e.message;
+        }
+    }
+
+    convertBtn.addEventListener('click', convert);
+    clearBtn.addEventListener('click', () => {
+        inputEl.value = '';
+        outputBox.textContent = '変換結果がここに表示されます';
+        stepInfo.innerHTML = '';
+        inputEl.focus();
+    });
+    inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); convert(); } });
+    convert();
+})();
+</script>
+</body>
+</html>
