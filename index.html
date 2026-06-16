@@ -22,7 +22,9 @@
         .btn:hover{background:#6b4630;border-color:#6b4630;}
         .btn-outline{background:transparent;color:var(--accent);border:1.5px solid var(--border);}
         .btn-outline:hover{background:#f0e6d8;border-color:var(--accent);}
-        .output-box{background:#fdfcf9;border:1.5px solid var(--border);border-radius:var(--radius);padding:16px 18px;min-height:100px;font-family:var(--font-serif);font-size:1.1rem;line-height:1.9;margin-top:8px;white-space:pre-wrap;word-break:break-all;}
+        .output-box{background:#fdfcf9;border:1.5px solid var(--border);border-radius:var(--radius);padding:16px 18px;min-height:100px;font-family:var(--font-serif);font-size:1.1rem;line-height:1.9;margin-top:8px;white-space:pre-wrap;word-break:break-all;position:relative;}
+        .copy-btn{position:absolute;top:8px;right:8px;padding:4px 12px;font-size:0.8rem;background:#f0e6d8;border:1px solid var(--border);border-radius:20px;cursor:pointer;color:var(--accent);font-weight:600;display:none;}
+        .copy-btn:hover{background:#e0d3c0;}
     </style>
 </head>
 <body>
@@ -33,11 +35,10 @@
         <button class="btn" id="convertBtn">變換</button>
         <button class="btn btn-outline" id="clearBtn">クリア</button>
     </div>
-    <div class="output-box" id="outputBox">變換結果がここに表示されます</div>
+    <div class="output-box" id="outputBox">變換結果がここに表示されます<button class="copy-btn" id="copyBtn">コピー</button></div>
 </div>
 <script>
 (function() {
-    // --- 字符判斷工具（含踊り字〻） ---
     function isKanji(ch) {
         const code = ch.charCodeAt(0);
         return (code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3400 && code <= 0x4DBF) || (code >= 0x20000 && code <= 0x2A6DF);
@@ -58,30 +59,23 @@
     function isJuuten(ch) { return ch === '㆐' || ch === '―'; }
     function isQuote(ch) { return ch === "'" || ch === '\u2018' || ch === '\u2019'; }
 
-    // --- 各組順序定義 ---
     const digitalOrder = ['一','二','三','四','五','六','七','八','九','十','十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
     const updownOrder = ['上','中','下'];
     const kouotsuOrder = ['甲','乙','丙','丁','戊','己','庚','辛','壬','癸'];
     const tenchiOrder = ['天','地','人'];
 
-    // --- 標記分組 ---
     function getMarkerGroup(inner) {
-        // 數字組：一為 pop，其餘為 push
         if (inner === '一') return { group:'digital', action:'pop', order:digitalOrder };
         if (digitalOrder.slice(1).includes(inner)) return { group:'digital', action:'push', order:digitalOrder };
-        // 上中下組
         if (inner === '上') return { group:'updown', action:'pop', order:updownOrder };
         if (['中','下'].includes(inner)) return { group:'updown', action:'push', order:updownOrder };
-        // 甲乙丙組（天干）
         if (inner === '甲') return { group:'kouotsu', action:'pop', order:kouotsuOrder };
         if (kouotsuOrder.slice(1).includes(inner)) return { group:'kouotsu', action:'push', order:kouotsuOrder };
-        // 天地人組
         if (inner === '天') return { group:'tenchi', action:'pop', order:tenchiOrder };
         if (['地','人'].includes(inner)) return { group:'tenchi', action:'push', order:tenchiOrder };
         return null;
     }
 
-    // --- 分詞 ---
     function tokenize(text) {
         const items = [];
         let i = 0;
@@ -176,7 +170,6 @@
         return items;
     }
 
-    // --- 展開所有引用塊 ---
     function expandAllQuotes(items) {
         const result = [];
         for (const item of items) {
@@ -199,7 +192,6 @@
         return result;
     }
 
-    // --- 縱點合併 ---
     function mergeJuuten(items) {
         function findPrevWord(arr, endIdx) { for (let j=endIdx; j>=0; j--) if (arr[j].type==='word') return j; return -1; }
         function findNextWord(arr, startIdx) { for (let j=startIdx; j<arr.length; j++) if (arr[j].type==='word') return j; return -1; }
@@ -232,7 +224,6 @@
         return items.filter(item => item.type !== 'juuten');
     }
 
-    // --- 再讀文字拆分 ---
     function splitAngleWord(wordValue) {
         const mainParts = [], angleParts = [];
         let remaining = wordValue;
@@ -250,7 +241,6 @@
         return { mainText: mainParts.join(''), angleText: angleParts.join('') };
     }
 
-    // --- レ點預處理 ---
     function preprocessReAll(items) {
         let changed = true;
         while (changed) {
@@ -277,16 +267,24 @@
                     const mergedValue = right.value + exchangeLeft;
                     const innerWithoutRe = cur.inner.replace(/レ/g, '');
 
-                    const marksBetween = [];
-                    for (let k = leftIdx + 1; k < rightIdx; k++) {
-                        if (items[k].type === 'mark' && k !== i) marksBetween.push(items[k]);
+                    const afterRightMarks = [];
+                    let k = rightIdx + 1;
+                    while (k < items.length && items[k].type === 'mark') {
+                        afterRightMarks.push(items[k]);
+                        k++;
                     }
+                    const marksBetween = [];
+                    for (let m = leftIdx + 1; m < rightIdx; m++) {
+                        if (items[m].type === 'mark' && m !== i) marksBetween.push(items[m]);
+                    }
+                    const allMarks = marksBetween.concat(afterRightMarks);
                     const newMarks = [];
                     if (innerWithoutRe !== '') {
                         newMarks.push({ type: 'mark', value: '[' + innerWithoutRe + ']', inner: innerWithoutRe });
                     }
 
-                    items.splice(leftIdx, rightIdx - leftIdx + 1);
+                    const deleteEnd = rightIdx + afterRightMarks.length;
+                    items.splice(leftIdx, deleteEnd - leftIdx + 1);
 
                     if (hasAngle) {
                         if (mainText.length > 0) {
@@ -299,7 +297,7 @@
                         items.splice(leftIdx, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
                     }
                     let insertPos = leftIdx + 1 + (hasAngle && mainText.length > 0 ? 1 : 0);
-                    for (const m of marksBetween) {
+                    for (const m of allMarks) {
                         items.splice(insertPos, 0, m);
                         insertPos++;
                     }
@@ -316,14 +314,12 @@
         return items;
     }
 
-    // --- 主處理流程 ---
     function process(text) {
         let items = tokenize(text);
         items = expandAllQuotes(items);
         items = mergeJuuten(items);
         items = preprocessReAll(items);
 
-        // 各組棧與順序參照
         const groups = {
             digital: { stack: [], order: digitalOrder },
             updown: { stack: [], order: updownOrder },
@@ -331,50 +327,49 @@
             tenchi: { stack: [], order: tenchiOrder }
         };
         const outputParts = [];
+        let pendingText = '';
 
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            if (item.type === 'sep') { outputParts.push(item.value); continue; }
-            if (item.type === 'word') {
-                const next = items[i+1];
-                if (next && next.type === 'mark') {
-                    const markerInfo = getMarkerGroup(next.inner);
-                    if (markerInfo) {
-                        const { mainText, angleText } = splitAngleWord(item.value);
-                        const group = groups[markerInfo.group];
-                        if (markerInfo.action === 'push') {
-                            // 若有再讀文字，主文直接輸出，再讀內容壓入帶標記
-                            if (angleText) {
-                                if (mainText) outputParts.push(mainText);
-                                group.stack.push({ value: angleText, marker: next.inner });
-                            } else {
-                                group.stack.push({ value: item.value, marker: next.inner });
-                            }
-                        } else { // pop
-                            outputParts.push(item.value);
-                            // 按組內順序排序後彈出
-                            const sorted = [...group.stack].sort((a, b) => {
-                                const idxA = group.order.indexOf(a.marker);
-                                const idxB = group.order.indexOf(b.marker);
+        for (const item of items) {
+            if (item.type === 'word' || item.type === 'angle') {
+                pendingText += item.value;
+            } else if (item.type === 'sep') {
+                if (pendingText) { outputParts.push(pendingText); pendingText = ''; }
+                outputParts.push(item.value);
+            } else if (item.type === 'mark') {
+                const mInfo = getMarkerGroup(item.inner);
+                if (mInfo) {
+                    if (mInfo.action === 'push') {
+                        if (pendingText) {
+                            const { mainText, angleText } = splitAngleWord(pendingText);
+                            if (mainText) outputParts.push(mainText);
+                            const stackContent = angleText || pendingText;
+                            groups[mInfo.group].stack.push({ value: stackContent, marker: item.inner });
+                            pendingText = '';
+                        }
+                    } else {
+                        if (pendingText) {
+                            outputParts.push(pendingText);
+                            pendingText = '';
+                        }
+                        const grp = groups[mInfo.group];
+                        if (grp.stack.length > 0) {
+                            const sorted = [...grp.stack].sort((a, b) => {
+                                const idxA = grp.order.indexOf(a.marker);
+                                const idxB = grp.order.indexOf(b.marker);
                                 return idxA - idxB;
                             });
                             for (const s of sorted) outputParts.push(s.value);
-                            group.stack = [];
+                            grp.stack = [];
                         }
-                        i++; // 跳過標記
-                    } else {
-                        outputParts.push(item.value);
                     }
                 } else {
+                    if (pendingText) { outputParts.push(pendingText); pendingText = ''; }
                     outputParts.push(item.value);
                 }
-                continue;
             }
-            if (item.type === 'angle') { outputParts.push(item.value); continue; }
-            if (item.type === 'mark') { outputParts.push(item.value); continue; }
         }
+        if (pendingText) outputParts.push(pendingText);
 
-        // 清除各組殘留棧（同樣需排序）
         const groupOrder = ['digital','updown','kouotsu','tenchi'];
         for (const gName of groupOrder) {
             const grp = groups[gName];
@@ -387,29 +382,52 @@
         return outputParts.join('');
     }
 
-    // --- UI ---
     const inputEl = document.getElementById('textInput');
     const outputBox = document.getElementById('outputBox');
     const convertBtn = document.getElementById('convertBtn');
     const clearBtn = document.getElementById('clearBtn');
+    const copyBtn = document.getElementById('copyBtn');
+
+    function updateOutput(text) {
+        outputBox.childNodes.forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) node.remove();
+        });
+        outputBox.insertBefore(document.createTextNode(text), copyBtn);
+        copyBtn.style.display = text ? 'inline-block' : 'none';
+    }
 
     function convert() {
         const text = inputEl.value.trim();
-        if (!text) { outputBox.textContent = 'テキストを入力してください'; return; }
+        if (!text) {
+            updateOutput('變換結果がここに表示されます');
+            return;
+        }
         try {
-            outputBox.textContent = process(text);
+            const result = process(text);
+            updateOutput(result);
         } catch (e) {
-            outputBox.textContent = 'エラーが發生しました';
+            updateOutput('エラーが發生しました');
         }
     }
 
     convertBtn.addEventListener('click', convert);
     clearBtn.addEventListener('click', () => {
         inputEl.value = '';
-        outputBox.textContent = '變換結果がここに表示されます';
+        updateOutput('變換結果がここに表示されます');
         inputEl.focus();
     });
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); convert(); } });
+
+    copyBtn.addEventListener('click', () => {
+        const text = outputBox.textContent.replace(/コピー$/, '').trim();
+        if (text && navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => {
+                copyBtn.textContent = 'コピーしました';
+                setTimeout(() => { copyBtn.textContent = 'コピー'; }, 1500);
+            });
+        }
+    });
+
     convert();
 })();
 </script>
