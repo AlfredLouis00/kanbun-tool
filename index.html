@@ -341,9 +341,12 @@
                     if (mInfo.action === 'push') {
                         if (pendingText) {
                             const { mainText, angleText } = splitAngleWord(pendingText);
-                            if (mainText) outputParts.push(mainText);
-                            const stackContent = angleText || pendingText;
-                            groups[mInfo.group].stack.push({ value: stackContent, marker: item.inner });
+                            if (angleText) {
+                                if (mainText) outputParts.push(mainText);
+                                groups[mInfo.group].stack.push({ value: angleText, marker: item.inner, id: groups[mInfo.group].stack.length });
+                            } else {
+                                groups[mInfo.group].stack.push({ value: pendingText, marker: item.inner, id: groups[mInfo.group].stack.length });
+                            }
                             pendingText = '';
                         }
                     } else {
@@ -356,7 +359,8 @@
                             const sorted = [...grp.stack].sort((a, b) => {
                                 const idxA = grp.order.indexOf(a.marker);
                                 const idxB = grp.order.indexOf(b.marker);
-                                return idxA - idxB;
+                                if (idxA !== idxB) return idxA - idxB;
+                                return b.id - a.id;
                             });
                             for (const s of sorted) outputParts.push(s.value);
                             grp.stack = [];
@@ -374,8 +378,12 @@
         for (const gName of groupOrder) {
             const grp = groups[gName];
             if (grp.stack.length > 0) {
-                const sorted = [...grp.stack].sort((a, b) => grp.order.indexOf(a.marker) - grp.order.indexOf(b.marker));
-                for (const s of sorted) outputParts.push(s.value);
+                const sorted = [...grp.stack].sort((a, b) => {
+                    const idxA = grp.order.indexOf(a.marker);
+                    const idxB = grp.order.indexOf(b.marker);
+                    if (idxA !== idxB) return idxA - idxB;
+                    return b.id - a.id;
+                });
                 grp.stack = [];
             }
         }
