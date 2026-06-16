@@ -83,14 +83,12 @@
         while (i < len) {
             const ch = text[i];
             if (isSeparator(ch)) { items.push({type:'sep',value:ch}); i++; continue; }
-
             if (ch === '[') {
                 const start = i; i++; let depth=1;
                 while (i<len && depth>0) { if (text[i]==='[') depth++; else if (text[i]===']') depth--; i++; }
                 items.push({type:'mark', value:text.substring(start,i), inner:text.substring(start+1,i-1)});
                 continue;
             }
-
             if (isQuote(ch)) {
                 const openQuote = ch;
                 const start = i; i++;
@@ -108,9 +106,7 @@
                 items.push({ type:'quote_block', value:text.substring(start,i), inner:inner, note:note, openQuote:openQuote, closeQuote:closeQuote });
                 continue;
             }
-
             if (isJuuten(ch)) { items.push({type:'juuten',value:ch}); i++; continue; }
-
             if (isKanji(ch)) {
                 let buf = ch; i++;
                 while (i<len) {
@@ -138,7 +134,6 @@
                 items.push({type:'word', value:buf, hasMerge:false});
                 continue;
             }
-
             if (isAngleOpen(ch)) {
                 const closeChar = getAngleClose(ch);
                 const start = i; i++;
@@ -147,7 +142,6 @@
                 items.push({type:'angle', value:text.substring(start,i)});
                 continue;
             }
-
             if (isKana(ch) || isOdoriji(ch) || isParenStart(ch)) {
                 let buf = '';
                 while (i<len) {
@@ -241,84 +235,10 @@
         return { mainText: mainParts.join(''), angleText: angleParts.join('') };
     }
 
-    function preprocessReAll(items) {
-        let changed = true;
-        while (changed) {
-            changed = false;
-            for (let i = 0; i < items.length; i++) {
-                const cur = items[i];
-                if (cur.type === 'mark' && cur.inner.includes('レ')) {
-                    let leftIdx = -1;
-                    for (let j = i - 1; j >= 0; j--) {
-                        if (items[j].type === 'word' || items[j].type === 'angle') { leftIdx = j; break; }
-                    }
-                    if (leftIdx === -1) continue;
-                    let rightIdx = -1;
-                    for (let j = i + 1; j < items.length; j++) {
-                        if (items[j].type === 'word' || items[j].type === 'angle') { rightIdx = j; break; }
-                    }
-                    if (rightIdx === -1) continue;
-
-                    const left = items[leftIdx];
-                    const right = items[rightIdx];
-                    const { mainText, angleText } = splitAngleWord(left.value);
-                    const hasAngle = angleText.length > 0;
-                    const exchangeLeft = hasAngle ? angleText : left.value;
-                    const mergedValue = right.value + exchangeLeft;
-                    const innerWithoutRe = cur.inner.replace(/レ/g, '');
-
-                    const afterRightMarks = [];
-                    let k = rightIdx + 1;
-                    while (k < items.length && items[k].type === 'mark') {
-                        afterRightMarks.push(items[k]);
-                        k++;
-                    }
-                    const marksBetween = [];
-                    for (let m = leftIdx + 1; m < rightIdx; m++) {
-                        if (items[m].type === 'mark' && m !== i) marksBetween.push(items[m]);
-                    }
-                    const allMarks = marksBetween.concat(afterRightMarks);
-                    const newMarks = [];
-                    if (innerWithoutRe !== '') {
-                        newMarks.push({ type: 'mark', value: '[' + innerWithoutRe + ']', inner: innerWithoutRe });
-                    }
-
-                    const deleteEnd = rightIdx + afterRightMarks.length;
-                    items.splice(leftIdx, deleteEnd - leftIdx + 1);
-
-                    if (hasAngle) {
-                        if (mainText.length > 0) {
-                            items.splice(leftIdx, 0, { type: 'word', value: mainText, hasMerge: left.hasMerge, mark: null });
-                            items.splice(leftIdx + 1, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
-                        } else {
-                            items.splice(leftIdx, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
-                        }
-                    } else {
-                        items.splice(leftIdx, 0, { type: 'word', value: mergedValue, hasMerge: true, mark: null });
-                    }
-                    let insertPos = leftIdx + 1 + (hasAngle && mainText.length > 0 ? 1 : 0);
-                    for (const m of allMarks) {
-                        items.splice(insertPos, 0, m);
-                        insertPos++;
-                    }
-                    for (const m of newMarks) {
-                        items.splice(insertPos, 0, m);
-                        insertPos++;
-                    }
-
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        return items;
-    }
-
     function process(text) {
         let items = tokenize(text);
         items = expandAllQuotes(items);
         items = mergeJuuten(items);
-        items = preprocessReAll(items);
 
         const groups = {
             digital: { stack: [], order: digitalOrder },
@@ -327,64 +247,138 @@
             tenchi: { stack: [], order: tenchiOrder }
         };
         const outputParts = [];
-        let pendingText = '';
 
-        for (const item of items) {
-            if (item.type === 'word' || item.type === 'angle') {
-                pendingText += item.value;
-            } else if (item.type === 'sep') {
-                if (pendingText) { outputParts.push(pendingText); pendingText = ''; }
-                outputParts.push(item.value);
-            } else if (item.type === 'mark') {
-                const mInfo = getMarkerGroup(item.inner);
-                if (mInfo) {
-                    if (mInfo.action === 'push') {
-                        if (pendingText) {
-                            const { mainText, angleText } = splitAngleWord(pendingText);
-                            if (angleText) {
-                                if (mainText) outputParts.push(mainText);
-                                groups[mInfo.group].stack.push({ value: angleText, marker: item.inner, id: groups[mInfo.group].stack.length });
-                            } else {
-                                groups[mInfo.group].stack.push({ value: pendingText, marker: item.inner, id: groups[mInfo.group].stack.length });
-                            }
-                            pendingText = '';
-                        }
-                    } else {
-                        if (pendingText) {
-                            outputParts.push(pendingText);
-                            pendingText = '';
-                        }
-                        const grp = groups[mInfo.group];
-                        if (grp.stack.length > 0) {
-                            const sorted = [...grp.stack].sort((a, b) => {
-                                const idxA = grp.order.indexOf(a.marker);
-                                const idxB = grp.order.indexOf(b.marker);
-                                if (idxA !== idxB) return idxA - idxB;
-                                return b.id - a.id;
-                            });
-                            for (const s of sorted) outputParts.push(s.value);
-                            grp.stack = [];
-                        }
-                    }
-                } else {
-                    if (pendingText) { outputParts.push(pendingText); pendingText = ''; }
-                    outputParts.push(item.value);
-                }
+        function getGroupByName(name) {
+            switch(name) {
+                case 'digital': return groups.digital;
+                case 'updown': return groups.updown;
+                case 'kouotsu': return groups.kouotsu;
+                case 'tenchi': return groups.tenchi;
+                default: return null;
             }
         }
-        if (pendingText) outputParts.push(pendingText);
+
+        function popGroupStack(mInfo) {
+            const grp = getGroupByName(mInfo.group);
+            if (!grp || grp.stack.length === 0) return '';
+            const sorted = [...grp.stack].sort((a, b) => {
+                const idxA = grp.order.indexOf(a.marker);
+                const idxB = grp.order.indexOf(b.marker);
+                if (idxA !== idxB) return idxA - idxB;
+                return grp.stack.indexOf(a) - grp.stack.indexOf(b);
+            });
+            const poppedText = sorted.map(s => s.value).join('');
+            grp.stack = [];
+            return poppedText;
+        }
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type === 'sep') {
+                outputParts.push(item.value);
+                continue;
+            }
+            if (item.type === 'word' || item.type === 'angle') {
+                const next = items[i + 1];
+                if (next && next.type === 'mark') {
+                    const inner = next.inner;
+                    if (inner === 'レ') {
+                        let rightIdx = i + 2;
+                        if (rightIdx < items.length && (items[rightIdx].type === 'word' || items[rightIdx].type === 'angle')) {
+                            const leftWord = item;
+                            const rightWord = items[rightIdx];
+                            const afterMarks = [];
+                            let k = rightIdx + 1;
+                            while (k < items.length && items[k].type === 'mark') {
+                                afterMarks.push(items[k]);
+                                k++;
+                            }
+                            const mergedValue = rightWord.value + leftWord.value;
+                            const mergedWord = { type:'word', value: mergedValue, hasMerge: true, mark: null };
+                            items.splice(i, rightIdx - i + 1 + afterMarks.length, mergedWord, ...afterMarks);
+                            i--;
+                            continue;
+                        }
+                    } else if (inner.includes('レ')) {
+                        const popChar = inner.replace('レ', '');
+                        const mInfo = getMarkerGroup(popChar);
+                        if (mInfo && mInfo.action === 'pop') {
+                            let rightIdx = i + 2;
+                            if (rightIdx < items.length && (items[rightIdx].type === 'word' || items[rightIdx].type === 'angle')) {
+                                const leftWord = item;
+                                const rightWord = items[rightIdx];
+                                const afterMarks = [];
+                                let k = rightIdx + 1;
+                                while (k < items.length && items[k].type === 'mark') {
+                                    afterMarks.push(items[k]);
+                                    k++;
+                                }
+                                if (afterMarks.length > 0) {
+                                    // 先 pop 再与右词块做纯レ交换
+                                    const poppedText = popGroupStack(mInfo);
+                                    const leftOverall = leftWord.value + poppedText;
+                                    const mergedValue = rightWord.value + leftOverall;
+                                    const mergedWord = { type:'word', value: mergedValue, hasMerge: true, mark: null };
+                                    items.splice(i, rightIdx - i + 1 + afterMarks.length, mergedWord, ...afterMarks);
+                                    i--;
+                                    continue;
+                                } else {
+                                    // 无后续标记：交换并生成 pop 标记
+                                    const mergedValue = rightWord.value + leftWord.value;
+                                    const mergedWord = { type:'word', value: mergedValue, hasMerge: true, mark: null };
+                                    const newMark = { type:'mark', value: '[' + popChar + ']', inner: popChar };
+                                    items.splice(i, rightIdx - i + 1, mergedWord, newMark);
+                                    i--;
+                                    continue;
+                                }
+                            }
+                        }
+                    } else {
+                        const mInfo = getMarkerGroup(inner);
+                        if (mInfo) {
+                            const { mainText, angleText } = splitAngleWord(item.value);
+                            const group = getGroupByName(mInfo.group);
+                            if (mInfo.action === 'push') {
+                                if (angleText) {
+                                    if (mainText) outputParts.push(mainText);
+                                    group.stack.push({ value: angleText, marker: next.inner });
+                                } else {
+                                    group.stack.push({ value: item.value, marker: next.inner });
+                                }
+                            } else { // pop
+                                outputParts.push(item.value);
+                                const popped = [];
+                                const grp = groups[mInfo.group];
+                                if (grp && grp.stack.length > 0) {
+                                    const sorted = [...grp.stack].sort((a, b) => {
+                                        const idxA = grp.order.indexOf(a.marker);
+                                        const idxB = grp.order.indexOf(b.marker);
+                                        if (idxA !== idxB) return idxA - idxB;
+                                        return grp.stack.indexOf(a) - grp.stack.indexOf(b);
+                                    });
+                                    for (const s of sorted) outputParts.push(s.value);
+                                    grp.stack = [];
+                                }
+                            }
+                            i++;
+                            continue;
+                        }
+                    }
+                }
+                outputParts.push(item.value);
+                continue;
+            }
+            if (item.type === 'mark') {
+                outputParts.push(item.value);
+                continue;
+            }
+        }
 
         const groupOrder = ['digital','updown','kouotsu','tenchi'];
         for (const gName of groupOrder) {
             const grp = groups[gName];
-            if (grp.stack.length > 0) {
-                const sorted = [...grp.stack].sort((a, b) => {
-                    const idxA = grp.order.indexOf(a.marker);
-                    const idxB = grp.order.indexOf(b.marker);
-                    if (idxA !== idxB) return idxA - idxB;
-                    return b.id - a.id;
-                });
-                grp.stack = [];
+            while (grp.stack.length > 0) {
+                outputParts.push(grp.stack.pop().value);
             }
         }
         return outputParts.join('');
